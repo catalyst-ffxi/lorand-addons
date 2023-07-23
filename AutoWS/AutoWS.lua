@@ -1,8 +1,8 @@
 _addon.name = 'AutoWS'
 _addon.author = 'Lorand'
 _addon.commands = {'autows','aws'}
-_addon.version = '0.3.1'
-_addon.lastUpdate = '2016.08.01'
+_addon.version = '0.4.0'
+_addon.lastUpdate = '2023.07.23'
 
 --[[
     TODO: Add per-mob WS settings
@@ -22,10 +22,10 @@ local useAutoRA = false
 local araDelayed = 0
 local ws_cmd = ''
 local autowsDelay = 0.8
+local use_am3 = false
 local defaults = {hps = {['<']=100, ['>']=5}}
 settings = _libs.lor.settings.load('data/settings.lua', defaults)
 local settings_loaded = false
-
 
 local function weap_type()
     local items = windower.ffxi.get_items()
@@ -36,7 +36,6 @@ local function weap_type()
     end
     return skill
 end
-
 
 function save_settings()
     local player = windower.ffxi.get_player()
@@ -50,9 +49,9 @@ function save_settings()
     settings[name][job][skill].hps = hps
     settings[name][job][skill].mobs = mobs
     settings[name][job][skill].ws_cmd = ws_cmd
+    settings[name][job][skill].use_am3 = use_am3
     settings:save()
 end
-
 
 function load_settings()
     local p = windower.ffxi.get_player()
@@ -61,9 +60,9 @@ function load_settings()
     hps = s.hps or defaults.hps
     mobs = s.mobs or {}
     ws_cmd = s.ws_cmd or ''
+    use_am3 = s.use_am3 or false
     settings_loaded = true
 end
-
 
 local function parse_hps(arg_str)
     local srx = {['<'] = '<%s*(%d+)', ['>'] = '>%s*(%d+)', ['='] = '=%s*(%d+)'}
@@ -84,7 +83,6 @@ local function parse_hps(arg_str)
     return vals
 end
 
-
 local function valid_hp_args(args)
     local vals = {['<'] = args['<'] or hps['<'], ['>'] = args['>'] or hps['>']}
     for s,v in pairs(vals) do
@@ -99,7 +97,6 @@ local function valid_hp_args(args)
     end
     return true
 end
-
 
 windower.register_event('addon command', function (command,...)
 	command = command and command:lower() or 'help'
@@ -169,6 +166,15 @@ windower.register_event('addon command', function (command,...)
 		else
 			atc(123,'Error: invalid argument for AutoRA: '..cmd)
 		end
+    elseif command == 'am3' then
+        if arg_str == 'on' then
+            use_am3 = true
+            atc('AutoWS will now wait for Aftermath level 3')
+        elseif arg_str == 'off' then
+            use_am3 = false
+            atc('AutoWS will no longer wait for Aftermath level 3')
+        end
+        save_settings()
 	elseif command == 'status' then
 		print_status()
     elseif S{'help','--help'}:contains(command) then
@@ -187,7 +193,6 @@ windower.register_event('addon command', function (command,...)
 	end
 end)
 
-
 windower.register_event('load', function()
     if not _libs.lor then
         windower.add_to_chat(39,'ERROR: .../Windower/addons/libs/lor/ not found! Please download: https://github.com/lorand-ffxi/lor_libs')
@@ -197,21 +202,17 @@ windower.register_event('load', function()
     load_settings()
 end)
 
-
 windower.register_event('logout', function()
     windower.send_command('lua unload autows')
 end)
-
 
 windower.register_event('zone change', function(new_id, old_id)
     autowsLastCheck = os.clock() + 15
 end)
 
-
 windower.register_event('job change', function()
     enabled = false
 end)
-
 
 windower.register_event('prerender', function()
     if not settings_loaded then
@@ -227,7 +228,7 @@ windower.register_event('prerender', function()
 			if (player ~= nil) and (player.status == 1) and (mob ~= nil) then
                 local hp_lt = table.get_nested_value(mobs, mob.name, '<') or hps['<']
                 local hp_gt = table.get_nested_value(mobs, mob.name, '>') or hps['>']
-                if player.vitals.tp > 999 then
+                if (player.vitals.tp > 999 and (use_am3 == false or am3_is_active())) or player.vitals.tp == 3000 then
                     if useAutoRA and (araDelayed < 2) then
                         araDelayed = araDelayed + 1
                     else
@@ -246,13 +247,11 @@ windower.register_event('prerender', function()
 	end
 end)
 
-
 function print_status()
 	local power = enabled and 'ON' or 'OFF'
     local ws_msg = #ws_cmd > 1 and ws_cmd or '(no ws specified)'
     atcf('[AutoWS: %s] %s %s mobs @ %d < HP%% < %s', power, ws_msg, rarr, hps['>'], hps['<'])
 end
-
 
 function print_help()
     local help = T{
@@ -261,6 +260,7 @@ function print_help()
         ['hp (>|<) (hp%)'] = 'Set the default HP value for when weaponskills should be executed',
         ['use weaponskill_name'] = 'Set the weaponskill that should be used',
         ['autora (on|off)'] = 'Enable / disable the AutoRA addon',
+        ['am3 (on|off)'] = 'Enable / disable waiting for Aftermath level 3'
     }
     --local mwwidth = max(unpack(map(string.wlen, table.keys(help))))
     local mwwidth = col_width(help:keys())
@@ -270,6 +270,17 @@ function print_help()
     end
 end
 
+function am3_is_active()
+    local status_id = res.buffs:with('name', 'Aftermath: Lv.3').id
+
+    for _, buff_id in pairs(windower.ffxi.get_player().buffs) do
+        if buff_id == status_id then
+            return true
+        end
+    end
+
+    return false
+end
 
 -----------------------------------------------------------------------------------------------------------
 --[[
